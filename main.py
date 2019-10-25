@@ -47,6 +47,11 @@ class PackageDB(DBConnect):
         
         Arguments
             packID: The unique ID number associated with the package.
+            recipient: optional, recipient of the packge
+            address: optional, listed address on the package to be found 
+            location: optional, storage location of the package
+            imageLoc: optional, Image location assocated with package, very optional
+            description: optional, description of the package input
             
         Returns 
             A dictionary containing all package data
@@ -114,6 +119,14 @@ class PackageDB(DBConnect):
         self.mydb.commit()
         
     def getStudentHousing(self, name=""):
+        """Finds given set of students in the Students table
+        
+        Arguments:
+            name: optional, only returns first names which match
+        
+        returns:
+            Two dimensional array of data, reference SQL organizatino for further info
+        """
         sql = "SELECT studentID, firstName, lastName, address, city, st, zip, \
         name, room FROM Student, Housing WHERE Student.house = Housing.housingID"
         self.cursor.execute(sql)
@@ -122,7 +135,9 @@ class PackageDB(DBConnect):
         
     
 class ImageProcessor():
+    """Handles all image upload and processing necessary for Package Pal"""
     def __init__(self):
+        """Creates standard connections for Image Processing using Google"""
         self.vision_client = vision.ImageAnnotatorClient()
         self.storage_client = storage.Client()
         self.packageDB = PackageDB()
@@ -156,6 +171,14 @@ class ImageProcessor():
         blob.upload_from_string(file_stream, content_type)
         
     def parseText(self, json):
+        """Takes JSON response from Vision call and returns best matched user
+        
+        Arguments:
+            json: The RAW JSON data from the Vision AI API call 
+            
+        Returns:
+            the unique Student ID of who best matches the label
+        """
         data = self.packageDB.getStudentHousing()
         ranks = []
         for person in data:
@@ -168,6 +191,21 @@ class ImageProcessor():
         return data[maxVal[1]][0]
     
     def handle(self, file_stream, filename, content_type):
+        """Takes file upload and returns the package ID now associated with the label
+            
+        Really a helper method to do all the necessary processing and connections
+            to Google to be able to process the data. The file comes from the
+            flask calls, and then everything is attempted to be ran, but errors
+            are caught so data is still returned even on failure. 
+            
+        Arguments: 
+            ile_stream: complete read of image data to be put in the cloud 
+            filename: the name to be assigned to the given image (ideally unique)
+            content_type: type of content being uploaded 
+        
+        Returns:
+            Dictionary containing status and id of new package, -1 means failure
+        """
         try:
             self.uploadImage(file_stream, filename, "image/png")
             json = self.processImage(filename)
@@ -184,6 +222,15 @@ class ImageProcessor():
             return {"status": "FAILED BAD Internal", "id": -1}
     
     def __heuristic(self, person, data): 
+        """Looks to see how much of a match a person is to given textual data
+        
+        Arguments:
+            person: The entire student information in array form from SQL database
+            data: the simplified JSON textual data of the label 
+        
+        Returns:
+            A value based on how much of a match the person is to the data
+        """
         value = 0
         for index in range (1, len(person)):
             strForm = str(person[index])
@@ -193,6 +240,14 @@ class ImageProcessor():
         return value
     
     def __simplifyJSON(self, json):
+        """Takes json data from vision AI and shortens to important information
+        
+        Arguments:
+            json: The JSON data straight out of Vision AI API
+        
+        Returns:
+            Just the textual data found in the image without the necessary locations 
+        """
         json = str(json)
         data = ""
         index = json.find("description:") + 12
