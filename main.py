@@ -66,7 +66,7 @@ class PackageDB(DBConnect):
         self.cursor.execute(sql)
         results = self.cursor.fetchall()
         if len(results) == 0:
-            return {"id":"", 
+            return {"id":-1, 
                     "recipient":"", 
                     "address":"", 
                     "location":"", 
@@ -168,14 +168,20 @@ class ImageProcessor():
         return data[maxVal[1]][0]
     
     def handle(self, file_stream, filename, content_type):
-        self.uploadImage(file_stream, filename, "image/png")
-        json = self.processImage(filename)
-        student = self.parseText(json)
-        self.packageDB.add(student, "", "Wade Commons", self.__simplifyJSON(json),\
-                           "gs://package-pal-images/" + filename)
-        resp = self.packageDB.find(-1, student, "", "Wade Commons",\
-                                   "gs://package-pal-images/" + filename)
-        return str(resp["id"])
+        try:
+            self.uploadImage(file_stream, filename, "image/png")
+            json = self.processImage(filename)
+            student = self.parseText(json)
+            self.packageDB.add(student, "", "Wade Commons", self.__simplifyJSON(json),\
+                               "gs://package-pal-images/" + filename)
+            resp = self.packageDB.find(-1, student, "", "Wade Commons",\
+                                       "gs://package-pal-images/" + filename)
+            if resp["id"] < 0:
+                return {"status": "FAILED BAD DB", "id": -1}
+            else:
+                return {"status": "OK", "id": str(resp["id"])}
+        except:
+            return {"status": "FAILED BAD Internal", "id": -1}
     
     def __heuristic(self, person, data): 
         value = 0
@@ -250,15 +256,14 @@ def upload_file():
     if request.method == 'POST':
         # check if the post request has the file part
         if "file" not in request.files:
-            return jsonify(status="FAILED", id="-1")
+            return jsonify(status="FAILED 1", id="-1")
         file = request.files['file']
         if file.filename == '' or \
             (".png" not in file.filename and ".jpeg" not in file.filename and ".jpg" not in file.filename):
             return jsonify(status="FAILED 2", id="-1")
         #file.save(os.path.join(app.config['UPLOAD_FOLDER'], file.filename))
         proc = ImageProcessor()
-        return jsonify(status="Success",\
-                       id=proc.handle(file.read(), file.filename, file.content_type))
+        return jsonify(proc.handle(file.read(), file.filename, file.content_type))
         
     
 """!!! MAIN METHOD !!!"""
