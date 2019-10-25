@@ -42,7 +42,7 @@ class DBConnect():
     
 class PackageDB(DBConnect):
     """Class that handles all CRUD relatinos with PackageDB"""
-    def find(self, packID):
+    def find(self, packID, recipient="", address="", location="", imageLoc="", description=""):
         """ Returns a Package given a unique ID
         
         Arguments
@@ -52,7 +52,17 @@ class PackageDB(DBConnect):
             A dictionary containing all package data
         """
         numID = int(packID)
-        sql = "SELECT * FROM Package WHERE packageID={packageID}".format(packageID=numID)
+        if numID > -1:
+            sql = "SELECT * FROM Package WHERE packageID={packageID}".format(packageID=numID)
+        else:
+            if imageLoc == "":
+                sql = "SELECT * FROM Package WHERE recipient='{rec}' AND \
+                address='{add}' AND location='{loc}' AND description='{desc}'\
+                ".format(rec=recipient, add=address, loc=location, desc=description)
+            else:   
+                sql = "SELECT * FROM Package WHERE recipient='{rec}' AND \
+                address='{add}' AND location='{loc}' AND imageLoc='{im}'\
+                ".format(rec=recipient, add=address, loc=location, im=imageLoc)
         self.cursor.execute(sql)
         results = self.cursor.fetchall()
         if len(results) == 0:
@@ -143,7 +153,7 @@ class ImageProcessor():
         """
         bucket = self.storage_client.get_bucket("package-pal-images")
         blob = bucket.blob(filename)
-        blob.upload_from_string(file_stream, content_type="image/png")
+        blob.upload_from_string(file_stream, content_type)
         
     def parseText(self, json):
         data = self.packageDB.getStudentHousing()
@@ -156,6 +166,16 @@ class ImageProcessor():
                 maxVal[0] = ranks[i]
                 maxVal[1] = i
         return data[maxVal[1]][0]
+    
+    def handle(self, file_stream, filename, content_type):
+        self.uploadImage(file_stream, filename, "image/png")
+        json = self.processImage(filename)
+        student = self.parseText(json)
+        self.packageDB.add(student, "", "Wade Commons", self.__simplifyJSON(json),\
+                           "gs://package-pal-images/" + filename)
+        resp = self.packageDB.find(-1, student, "", "Wade Commons",\
+                                   "gs://package-pal-images/" + filename)
+        return str(resp["id"])
     
     def __heuristic(self, person, data): 
         value = 0
@@ -237,9 +257,8 @@ def upload_file():
             return jsonify(status="FAILED 2", id="-1")
         #file.save(os.path.join(app.config['UPLOAD_FOLDER'], file.filename))
         proc = ImageProcessor()
-        proc.uploadImage(file.read(), file.filename, file.content_type)
-        json = proc.processImage(file.filename)
-        return jsonify(status=proc.parseText(json))
+        return jsonify(status="Success",\
+                       id=proc.handle(file.read(), file.filename, file.content_type))
         
     
 """!!! MAIN METHOD !!!"""
