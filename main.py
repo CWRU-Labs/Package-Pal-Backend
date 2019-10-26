@@ -11,6 +11,7 @@ import mysql.connector
 from google.cloud import vision, storage
 import datetime
 import configparser
+import uuid 
 
 # Read configuration from file.
 config = configparser.ConfigParser()
@@ -166,9 +167,15 @@ class ImageProcessor():
             filename: the name to be assigned to the given image (ideally unique)
             content_type: type of content being uploaded 
         """
+        if "." in str(filename):
+            name = str(filename)[:str(filename).find(".")] +\
+            uuid.uuid4().hex[0:8] + str(filename)[str(filename).find("."):]
+        else:
+            name = filename
         bucket = self.storage_client.get_bucket("package-pal-images")
-        blob = bucket.blob(filename)
+        blob = bucket.blob(name)
         blob.upload_from_string(file_stream, content_type)
+        return name
         
     def parseText(self, json):
         """Takes JSON response from Vision call and returns best matched user
@@ -207,13 +214,13 @@ class ImageProcessor():
             Dictionary containing status and id of new package, -1 means failure
         """
         try:
-            self.uploadImage(file_stream, filename, "image/png")
-            json = self.processImage(filename)
+            name = self.uploadImage(file_stream, filename, "image/png")
+            json = self.processImage(name)
             student = self.parseText(json)
             self.packageDB.add(student, "", "Wade Commons", self.__simplifyJSON(json),\
-                               "gs://package-pal-images/" + filename)
+                               "gs://package-pal-images/" + name)
             resp = self.packageDB.find(-1, student, "", "Wade Commons",\
-                                       "gs://package-pal-images/" + filename)
+                                       "gs://package-pal-images/" + name)
             if resp["id"] < 0:
                 return {"status": "FAILED BAD DB", "id": -1}
             else:
@@ -311,7 +318,10 @@ def upload_file():
     if request.method == 'POST':
         # check if the post request has the file part
         if "file" not in request.files:
-            return jsonify(status="FAILED 1", id="-1")
+            dat = request.form.to_dict(flat=True)
+            inf = request.files.to_dict(flat=True)
+            return jsonify(status="FAILED 1", form=str(dat.keys()),\
+                           files=str(inf.keys()), other=str(request.files.get('file')), id="-1")
         file = request.files['file']
         if file.filename == '' or \
             (".png" not in file.filename and ".jpeg" not in file.filename and ".jpg" not in file.filename):
@@ -324,5 +334,5 @@ def upload_file():
 """!!! MAIN METHOD !!!"""
 if __name__ == '__main__':
     #Start Flask Server
-    app.run(port=8080, debug=True)
-    #print("Hello World")
+    #app.run(port=8080, debug=True)
+    print("Hello World")
