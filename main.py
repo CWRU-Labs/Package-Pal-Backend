@@ -94,6 +94,25 @@ class PackageDB(DBConnect):
                     "description":results[0][8]
                     }
     
+    def recents(self, number = 5):
+        sql = "SELECT * FROM Package ORDER BY dateTimeIn Limit " + str(number)
+        self.cursor.execute(sql)
+        resp = self.cursor.fetchall() 
+        data = {}
+        for pack in resp: 
+            data[pack[0]] = {"id":pack[0], 
+                    "recipient":pack[1], 
+                    "address":pack[2], 
+                    "location":pack[3], 
+                    "dateTimeIn":pack[4], 
+                    "dateTimeOut":pack[5], 
+                    "completeText":pack[6], 
+                    "imageLoc":pack[7], 
+                    "description":pack[8]
+                    }
+        return data 
+
+    
     def add(self, 
                       recipient, 
                       address, 
@@ -167,11 +186,7 @@ class ImageProcessor():
             filename: the name to be assigned to the given image (ideally unique)
             content_type: type of content being uploaded 
         """
-        if "." in str(filename):
-            name = str(filename)[:str(filename).find(".")] +\
-            uuid.uuid4().hex[0:8] + str(filename)[str(filename).find("."):]
-        else:
-            name = filename
+        name = self.__uniqueName(filename)
         bucket = self.storage_client.get_bucket("package-pal-images")
         blob = bucket.blob(name)
         blob.upload_from_string(file_stream, content_type)
@@ -266,6 +281,14 @@ class ImageProcessor():
             data += json[index]
             index += 1
         return data
+    
+    def __uniqueName(filename):
+        if "." in str(filename):
+            name = str(filename)[:str(filename).find(".")] +\
+            uuid.uuid4().hex[0:8] + str(filename)[str(filename).find("."):]
+        else:
+            name = filename
+        return name
   
 
 """!!! API CLASSES NEEDED FOR RESTFUL SERVER !!!"""
@@ -284,6 +307,11 @@ class Package(Resource):
         """
         db = PackageDB()
         return jsonify(db.find(packID))
+    
+class Recents(Resource):
+    def get(self, packs):
+        db = PackageDB()
+        return jsonify(db.recents(packs))
 
 class Test(Resource):
     """Class to test the running of backend server"""
@@ -301,6 +329,7 @@ class Employees_Name(Resource):
 api.add_resource(Package, '/package/<packID>') # Route_1
 api.add_resource(Test, '/test') # Route_2
 api.add_resource(Employees_Name, '/employees/<employee_id>') # Route_3
+api.add_resource(Package, '/recents/<packs>') # Route_1
 
 @app.route('/uploader', methods = ['POST', 'GET'])
 @cross_origin(origin='*')
@@ -334,5 +363,5 @@ def upload_file():
 """!!! MAIN METHOD !!!"""
 if __name__ == '__main__':
     #Start Flask Server
-    #app.run(port=8080, debug=True)
-    print("Hello World")
+    app.run(port=8080, debug=True)
+    #print("Hello World")
