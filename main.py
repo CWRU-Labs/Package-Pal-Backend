@@ -95,12 +95,57 @@ class PackageDB(DBConnect):
                     }
     
     def recents(self, number = 5):
-        sql = "SELECT * FROM Package ORDER BY dateTimeIn Limit " + str(number)
+        sql = "SELECT * FROM Package ORDER BY dateTimeIn DESC Limit " + str(number)
         self.cursor.execute(sql)
         resp = self.cursor.fetchall() 
         data = {}
-        for pack in resp: 
-            data[pack[0]] = {"id":pack[0], 
+        if len(resp) == 0:
+            return {"id":-1, 
+                    "recipient":"", 
+                    "address":"", 
+                    "location":"", 
+                    "dateTimeIn":"", 
+                    "dateTimeOut":"", 
+                    "completeText":"", 
+                    "imageLoc":"", 
+                    "description":""
+                    }
+        else:
+            index = len(resp)
+            while index > 0:
+                index -= 1
+                pack = resp[index]
+                data[pack[0]] = {"id":pack[0], 
+                    "recipient":pack[1], 
+                    "address":pack[2], 
+                    "location":pack[3], 
+                    "dateTimeIn":pack[4], 
+                    "dateTimeOut":pack[5], 
+                    "completeText":pack[6], 
+                    "imageLoc":pack[7], 
+                    "description":pack[8]
+                    }
+        return data 
+    
+    def search(self, phrase):
+        sql = "SELECT * FROM Package WHERE recipient=\"" + phrase + "\""
+        self.cursor.execute(sql)
+        resp = self.cursor.fetchall() 
+        data = {}
+        if len(resp) == 0:
+            return {"id":-1, 
+                    "recipient":"", 
+                    "address":"", 
+                    "location":"", 
+                    "dateTimeIn":"", 
+                    "dateTimeOut":"", 
+                    "completeText":"", 
+                    "imageLoc":"", 
+                    "description":""
+                    }
+        else:
+            for pack in resp: 
+                data[pack[0]] = {"id":pack[0], 
                     "recipient":pack[1], 
                     "address":pack[2], 
                     "location":pack[3], 
@@ -282,7 +327,7 @@ class ImageProcessor():
             index += 1
         return data
     
-    def __uniqueName(filename):
+    def __uniqueName(self, filename):
         if "." in str(filename):
             name = str(filename)[:str(filename).find(".")] +\
             uuid.uuid4().hex[0:8] + str(filename)[str(filename).find("."):]
@@ -312,6 +357,11 @@ class Recents(Resource):
     def get(self, packs):
         db = PackageDB()
         return jsonify(db.recents(packs))
+    
+class Search(Resource):
+    def get(self, phrase):
+        db = PackageDB()
+        return jsonify(db.search(phrase))
 
 class Test(Resource):
     """Class to test the running of backend server"""
@@ -329,7 +379,8 @@ class Employees_Name(Resource):
 api.add_resource(Package, '/package/<packID>') # Route_1
 api.add_resource(Test, '/test') # Route_2
 api.add_resource(Employees_Name, '/employees/<employee_id>') # Route_3
-api.add_resource(Package, '/recents/<packs>') # Route_1
+api.add_resource(Recents, '/recents/<packs>') # Route_4
+api.add_resource(Search, '/search/<phrase>') # Route_5
 
 @app.route('/uploader', methods = ['POST', 'GET'])
 @cross_origin(origin='*')
