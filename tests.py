@@ -1,87 +1,158 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Oct 22 20:42:11 2019
+Created on Fri Nov 15 11:50:08 2019
 
 @author: jacob
 """
 
+import serv
 import unittest 
+import os 
+import json
+from PIL import Image
+from io import BytesIO
+# Imports the Google Cloud client library
+from google.cloud import storage
 
 class TestStringMethods(unittest.TestCase):
 
     def test_findUser(self):
-        self.assertEqual(findUser(getJSON("data.json")), 'jse41')
-        self.assertEqual(findUser(getJSON("uri.json")), 'smk191')
+        im = serv.ImageProcessor()
+        self.assertEqual(im.parseText(getJSON("data.json")), 'jse41')
+        self.assertEqual(im.parseText(getJSON("uri.json")), 'smk191')
         
     def test_simplifyJSON(self):
-        self.assertTrue("locale" not in simplifyJSON(getJSON("data.json")))
-        self.assertTrue("bounding" not in simplifyJSON(getJSON("data.json")))
+        im = serv.ImageProcessor()
+        self.assertTrue("locale" not in im._ImageProcessor__simplifyJSON(getJSON("data.json")))
+        self.assertTrue("bounding" not in im._ImageProcessor__simplifyJSON(getJSON("data.json")))
+        self.assertTrue(len(getJSON("data.json")) > len(im._ImageProcessor__simplifyJSON(getJSON("data.json"))))
         
-"""
-    def test_split(self):
-        s = 'hello world'
-        self.assertEqual(s.split(), ['hello', 'world'])
-        # check that s.split fails when the separator is not a string
-        with self.assertRaises(TypeError):
-            s.split(2)"""
+    def test_uniqueName(self):
+        im = serv.ImageProcessor()
+        for _ in range(100):
+            self.assertNotEqual(im._ImageProcessor__uniqueName("jacob.jpg"), im._ImageProcessor__uniqueName("jacob.jpg"))
+        self.assertGreater(len(im._ImageProcessor__uniqueName("jacob.jpg")), len("jacob.jpg"))
+        self.assertTrue(".png" in im._ImageProcessor__uniqueName("jacob.png"))
+        self.assertEqual(im._ImageProcessor__uniqueName("jacob"), im._ImageProcessor__uniqueName("jacob"))
+        
+    def test_heuristic(self):
+        im = serv.ImageProcessor()
+        a = getInfo()
+        self.assertAlmostEqual(3.5, im._ImageProcessor__heuristic(a[3], im._ImageProcessor__simplifyJSON(getJSON("data.json"))))
+        self.assertAlmostEqual(7.5, im._ImageProcessor__heuristic(a[2], im._ImageProcessor__simplifyJSON(getJSON("data.json"))))
+        self.assertAlmostEqual(3.0, im._ImageProcessor__heuristic(a[1], im._ImageProcessor__simplifyJSON(getJSON("data.json"))))
+        self.assertAlmostEqual(5.5, im._ImageProcessor__heuristic(a[0], im._ImageProcessor__simplifyJSON(getJSON("data.json"))))
+        
+        self.assertAlmostEqual(3.75, im._ImageProcessor__heuristic(a[3], im._ImageProcessor__simplifyJSON(getJSON("uri.json"))))
+        self.assertAlmostEqual(4.75, im._ImageProcessor__heuristic(a[2], im._ImageProcessor__simplifyJSON(getJSON("uri.json"))))
+        self.assertAlmostEqual(7.5, im._ImageProcessor__heuristic(a[1], im._ImageProcessor__simplifyJSON(getJSON("uri.json"))))
+        self.assertAlmostEqual(4.75, im._ImageProcessor__heuristic(a[0], im._ImageProcessor__simplifyJSON(getJSON("uri.json"))))
+        
+    def test_db(self):
+        db = serv.DBConnect()
+        db.close()
+        
+    def test_upload(self):
+        im = serv.ImageProcessor()
+        file = Image.open("jrLabel.png")
+        imagefile = BytesIO()
+        file.save(imagefile, format='PNG')
+        resp = im.uploadImage(imagefile.getvalue(), "jrLabel.png", "image/png")
+        self.assertTrue("jrLabel" in resp)
+        # Instantiates a client
+        storage_client = storage.Client()
+        bucket = storage_client.get_bucket("package-pal-images")
+        blobs = bucket.list_blobs()
+        a = False 
+        for blob in blobs:
+            if blob.name == resp:
+                a = True
+                blob.delete()
+        self.assertTrue(a)
+        file.close()
+        imagefile.close()
+        
+    def test_process(self):
+        im = serv.ImageProcessor()
+        resp = str(im.processImage("jrLabel.png"))
+        self.assertIn("jason", resp.lower())
+        self.assertIn("warehouse", resp.lower())
+        self.assertIn("locale", resp.lower())
+        self.assertIn("bounding", resp.lower())
+        
+    def test_handle(self):
+        im = serv.ImageProcessor()
+        file = Image.open("jrLabel.png")
+        imagefile = BytesIO()
+        file.save(imagefile, format='PNG')
+        resp = im.handle(imagefile.getvalue(), "jrLabel.png", "image/png")
+        self.assertIn("OK", resp["status"])
+        num = int(resp["id"])
+        
+        db = serv.PackageDB()
+        entry = db.find(num)
+        
+        self.assertNotIn("-1", str(entry["id"]))        
+        name = entry["imageLoc"][24:]
+        # Instantiates a client
+        storage_client = storage.Client()
+        bucket = storage_client.get_bucket("package-pal-images")
+        blobs = bucket.list_blobs()
+        a = False 
+        for blob in blobs:
+            if blob.name == name:
+                a = True
+        self.assertTrue(a)
+        im._ImageProcessor__hardRemove(num)
+        file.close()
+        imagefile.close()
+        
+    def test_recents(self):
+        db = serv.PackageDB() 
+        resp = db.recents()
+        self.assertEqual(5, len(resp))
+        resp = db.recents(2)
+        self.assertEqual(2, len(resp))
+        resp = db.recents(0)["id"]
+        self.assertIn("-1", str(resp))
+        
+    def test_findStudent(self):
+        db = serv.PackageDB()
+        resp = db.search("jdr145")
+        found = False
+        for entry in resp:
+            if resp[entry]["imageLoc"][24:] == "jrLabel.png":
+                found = True
+        self.assertTrue(found)
+        resp = db.search("adf")
+        self.assertIn("-1", str(resp["id"]))
+        
+    def test_find(self):
+        db = serv.PackageDB()
+        resp = db.find("9999")
+        self.assertIn("-1", str(resp["id"]))
+        resp = db.find("14")
+        self.assertIn("14", str(resp["id"]))
+        self.assertIn("jdr145", resp["recipient"])
+        resp = db.find("-1", "jdr145", "", "Wade Commons", "gs://package-pal-images/jrLabel.png", "")
+        self.assertIn("14", str(resp["id"]))
+        resp = db.find("-1", "jdr145", "", "Wade Commons", "", "")
+        self.assertIn("14", str(resp["id"]))
+        
+
+def getJSON(path):
+    with open(path) as json_file:
+        file = json_file.read()
+    return str(file)
 
 def getInfo():
-    """    
-    ids = ["jse41", "jdr145", "smk191", "mxh740"]
-    firstNames = ["Jacob", "Jason", "Uri", "Ryan"]
-    lastNames = ["Engelbrecht", "Richards", "Johson", "Upsol"]
-    zips = ["44106", "44106", "44106", "44106"]
-    state = ["OH", "OH", "OH", "OH"]
-    city = ["Cleveland", "Cleveland", "Cleveland Heights", "Cleveland"]
-    house = ["House 3", "House 3", "Glaser House", "Curlet House"]
-    address = ["1681 E 116 St.", "1681 E 116 St.", "11900 Carlton Rd", "1616 E 115 St."]
-    room = ["133 A", "133 B", "220 D", "420"]
-    """
     jacob = ["jse41", "Jacob", "Engelbrecht", "44106", "OH", "Cleveland", "House 3", "1681 E 116 St.", "133 A"]
     jason = ["jdr145", "Jason", "Richards", "44106", "OH", "Cleveland", "House 3", "1681 E 116 St.", "133 B"]
     uri = ["smk191", "Uri", "Johson", "44106", "OH", "Cleveland Heights", "Glaser House", "11900 Carlton Rd", "220 D"]
     ryan = ["mxh740", "Ryan", "Upson", "44106", "OH", "Cleveland", "Cutler House", "1616 E 115 St.", "420"]
     data = [jason, uri, jacob, ryan]
     return data 
-    
 
-def getJSON(path):
-    with open(path) as json_file:
-        file = json_file.read()
-    return file
-
-def simplifyJSON(json):
-    data = ""
-    index = json.find("description:") + 12
-    final = json.find("bounding")
-    while json[index] != '\"':
-        index += 1
-    index += 1
-    while json[index] != '\"' and index < final:
-        data += json[index]
-        index += 1
-    return data
-
-def findUser(json):
-    data = getInfo()
-    ranks = []
-    for person in data:
-        ranks.append(heuristic(person, simplifyJSON(json)))
-    maxVal = [0, 0]
-    for i in range(0, len(ranks)):
-        if ranks[i] > maxVal[0]:
-            maxVal[0] = ranks[i]
-            maxVal[1] = i
-    return data[maxVal[1]][0]
-    
-
-def heuristic(person, data): 
-    value = 0
-    for index in range (1, len(person)):
-        for word in person[index].split(" "):
-            if word in data:
-                value += 1 / len(person[index].split(" "))
-    return value
 
 if __name__ == '__main__':
     print("Testing has Begun")
