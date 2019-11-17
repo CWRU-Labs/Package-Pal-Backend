@@ -12,6 +12,8 @@ from google.cloud import vision, storage
 import datetime
 import configparser
 import uuid 
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 # Read configuration from file.
 config = configparser.ConfigParser()
@@ -22,6 +24,7 @@ app = Flask(__name__)
 CORS(app)
 api = Api(app)
 
+sendEmails = True
 
 """!!! BACKEND CLASS DEFINITIONS !!!"""
 class DBConnect():
@@ -197,6 +200,20 @@ class PackageDB(DBConnect):
         self.cursor.execute(sql)
         return(self.cursor.fetchall())
         
+    def findStudent(self, studentID):
+        sql = "SELECT * FROM Student WHERE studentID=\"" + studentID + "\""
+        self.cursor.execute(sql)
+        pack = self.cursor.fetchall() 
+        if len(pack) == 0:
+            return {"id":-1, 
+                    "name":"", 
+                    "email":""}
+        else:
+            pack = pack[0]
+            return {"id":pack[0], 
+                    "name":str(pack[1]) + str(pack[2]), 
+                    "email": str(pack[0]) + "@case.edu",
+                    "other": pack[3]}
         
     
 class ImageProcessor():
@@ -334,7 +351,64 @@ class ImageProcessor():
         else:
             name = filename
         return name
+    
+    def __hardRemove(self, packID):
+        name = self.packageDB.find(packID)["imageLoc"][24:]
+        bucket = self.storage_client.get_bucket("package-pal-images")
+        #remove sql
+        sql = "DELETE FROM Package WHERE packageID={packageID}".format(packageID=packID)
+        self.packageDB.cursor.execute(sql)
+        self.packageDB.mydb.commit()        
+        #remove file 
+        blobs = bucket.list_blobs()
+        for blob in blobs:
+            if blob.name == name:
+                blob.delete()
   
+class EmailSend():
+    def __init__(self):
+        self.packageDB = PackageDB()
+        
+    def check(self):
+        pass
+    
+    def formEmail(self, packID):
+        pack = self.packageDB.find(packID)
+        resp = self.packageDB.findStudent(pack["recipient"])
+        sender = 'HARLD@package-pal.appspot.com'
+        recip = resp["email"]
+        body = "<p>You have a package waiting at {loc}! Bring your CaseOneCard to the office to pick it up. \
+                </p><p>Here are some details:</p><table><tbody><tr><th align=\"right\">Type:</th><td>{size}</td></tr><tr><th align=\"right\">\
+                Delivery Date:</th><td>{arrival}</td></tr><tr><th align=\"right\">Carrier:</th><td>USPS Priority Mail</td></tr><tr><th align=\"right\"\
+                >Origin:</th><td>United States</td></tr></tbody></table><p> You can always access your waiting packages and mail in your \
+                <a href=\"https://housing.case.edu/myhousing\" target=\"_blank\" data-saferedirecturl=\
+                \"https://www.google.com/url?q=https://housing.case.edu/myhousing&amp;source=gmail&amp;ust=1574113999646000&amp;usg=AFQjCNEQ9Z9It7YAe6Tu4smZca2gkFIP5w\">\
+                myHousing</a>.</p>".format(size="Box", arrival=str(pack["dateTimeIn"]), loc=str(pack["imageLoc"]))
+        return Mail(from_email= sender,
+                    to_emails=recip,
+                    subject='[HARLD] You\'ve received a package!',
+                    html_content=body)
+        
+    def sendEmail(self, packID):
+        message = self.formEmail(packID)
+        try:
+            sg = SendGridAPIClient(config['SendGrid']['Key'])
+            sg.send(message)
+            return True
+        except:
+            return False
+
+def emails(secure):
+    global sendEmails
+    secure = int(secure)
+    data = {}
+    if secure == 2021:
+        sendEmails = not sendEmails
+        data["status"] = "OK"
+        data["sending"] = sendEmails
+    else:
+        data["status"] = "Incorrect Key"
+    return data 
 
 """!!! API CLASSES NEEDED FOR RESTFUL SERVER !!!"""
 class Package(Resource):
@@ -373,6 +447,11 @@ class Employees_Name(Resource):
     """Class to handle """
     def get(self, employee_id):
         return jsonify(username="Jason", email="jd4", id="jd45")
+    
+class Email(Resource):
+    """Class to handle """
+    def get(self, secure):
+        return jsonify(emails(secure))
 
 
 """!!! API ROUTE DEFINITIONS !!!"""
@@ -381,6 +460,7 @@ api.add_resource(Test, '/test') # Route_2
 api.add_resource(Employees_Name, '/employees/<employee_id>') # Route_3
 api.add_resource(Recents, '/recents/<packs>') # Route_4
 api.add_resource(Search, '/search/<phrase>') # Route_5
+api.add_resource(Email, '/email/<secure>') # Route_6
 
 @app.route('/uploader', methods = ['POST', 'GET'])
 @cross_origin(origin='*')
@@ -414,5 +494,5 @@ def upload_file():
 """!!! MAIN METHOD !!!"""
 if __name__ == '__main__':
     #Start Flask Server
-    app.run(port=8080, debug=True)
+    app.run(port=8080, debug=True, use_reloader=False)
     #print("Hello World")
