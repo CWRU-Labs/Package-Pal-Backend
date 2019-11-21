@@ -18,8 +18,8 @@ class TestStringMethods(unittest.TestCase):
 
     def test_findUser(self):
         im = serv.ImageProcessor()
-        self.assertEqual(im.parseText(getJSON("data.json")), 'jse41')
-        self.assertEqual(im.parseText(getJSON("uri.json")), 'smk191')
+        self.assertEqual(im.parseText(getJSON("data.json"))[0], 'jse41')
+        self.assertEqual(im.parseText(getJSON("uri.json"))[0], 'smk191')
         
     def test_simplifyJSON(self):
         im = serv.ImageProcessor()
@@ -90,10 +90,10 @@ class TestStringMethods(unittest.TestCase):
         num = int(resp["id"])
         
         db = serv.PackageDB()
-        entry = db.find(num)
-        
-        self.assertNotIn("-1", str(entry["id"]))        
-        name = entry["imageLoc"][24:]
+        entry = db.findPackage(num)
+        for pack in entry:
+            self.assertNotIn("-1", str(entry[pack]["id"]))        
+            name = entry[pack]["imageLoc"][24:]
         # Instantiates a client
         storage_client = storage.Client()
         bucket = storage_client.get_bucket("package-pal-images")
@@ -127,17 +127,28 @@ class TestStringMethods(unittest.TestCase):
         resp = db.search("adf")
         self.assertIn("-1", str(resp["id"]))
         
-    def test_find(self):
+    def test_findPackage(self):
         db = serv.PackageDB()
         resp = db.find("9999")
         self.assertIn("-1", str(resp["id"]))
-        resp = db.find("14")
-        self.assertIn("14", str(resp["id"]))
-        self.assertIn("jdr145", resp["recipient"])
-        resp = db.find("-1", "jdr145", "", "Wade Commons", "gs://package-pal-images/jrLabel.png", "")
-        self.assertIn("14", str(resp["id"]))
-        resp = db.find("-1", "jdr145", "", "Wade Commons", "", "")
-        self.assertIn("14", str(resp["id"]))
+        resp = db.findPackage("14")
+        self.assertIn("14", str(resp[14]["id"]))
+        self.assertIn("jdr145", resp[14]["recipient"])
+        resp = db.findPackage("-1", "jdr145", "", "Wade Commons", "gs://package-pal-images/jrLabel.png", "")
+        self.assertIn("14", str(resp[14]["id"]))
+        resp = db.findPackage("-1", "jdr145", "", "Wade Commons", "", "")
+        self.assertIn("14", str(resp[14]["id"]))
+        
+    def test_emailToggle(self):
+        resp = serv.emails(2021)
+        self.assertIn("OK", str(resp["status"]))
+        resp = serv.emails(2000)
+        self.assertNotIn("OK", str(resp["status"]))
+        
+    def test_emailBuild(self):
+        em = serv.EmailSend()
+        resp = em.formEmail(14)
+        self.assertIn("[HARLD]", str(resp.subject))
         
 
 def getJSON(path):
