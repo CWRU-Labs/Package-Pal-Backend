@@ -46,8 +46,8 @@ class DBConnect():
     
 class PackageDB(DBConnect):
     """Class that handles all CRUD relatinos with PackageDB"""
-    def find(self, packID, recipient="", address="", location="", imageLoc="", description=""):
-        """ Returns a Package given a unique ID
+    def findPackage(self, packID, recipient="", address="", location="", imageLoc="", description=""):
+        """ Returns a Package given a unique Package ID
         
         Arguments
             packID: The unique ID number associated with the package.
@@ -74,6 +74,7 @@ class PackageDB(DBConnect):
                 ".format(rec=recipient, add=address, loc=location, im=imageLoc)
         self.cursor.execute(sql)
         results = self.cursor.fetchall()
+        data = {}
         if len(results) == 0:
             return {"id":-1, 
                     "recipient":"", 
@@ -86,7 +87,8 @@ class PackageDB(DBConnect):
                     "description":""
                     }
         else:
-            return {"id":results[0][0], 
+            for pack in results: 
+                data[pack[0]] = {"id":results[0][0], 
                     "recipient":results[0][1], 
                     "address":results[0][2], 
                     "location":results[0][3], 
@@ -96,8 +98,17 @@ class PackageDB(DBConnect):
                     "imageLoc":results[0][7], 
                     "description":results[0][8]
                     }
+        return data
     
     def recents(self, number = 5):
+        """ Returns a set of pnumber (default 5) recent packages
+        
+        Arguments
+            number: The number of recent packages you want 
+            
+        Returns 
+            A dictionary containing number many packages (or as many as possible)
+        """
         sql = "SELECT * FROM Package ORDER BY dateTimeIn DESC Limit " + str(number)
         self.cursor.execute(sql)
         resp = self.cursor.fetchall() 
@@ -130,7 +141,37 @@ class PackageDB(DBConnect):
                     }
         return data 
     
+    def find(self, string):
+        """ Returns a set of packages matching the search 
+        
+        Arguments
+            string: either the packageID or the CaseID of the students
+            
+        Returns 
+            A dictionary containing all packages data
+        """
+        caseID = True
+        if len(string) > 3:
+            for i in range(3):
+                if string[i] < 'A' or string[i] > 'z':
+                    caseID = False
+                    break
+        else:
+            caseID = False
+        if caseID:
+            return self.search(string)
+        else:
+            return self.findPackage(string)
+                
     def search(self, phrase):
+        """Finds given set of students in the Students table
+        
+        Arguments:
+            name: optional, only returns first names which match
+        
+        returns:
+            Two dimensional array of data, reference SQL organizatino for further info
+        """
         sql = "SELECT * FROM Package WHERE recipient=\"" + phrase + "\""
         self.cursor.execute(sql)
         resp = self.cursor.fetchall() 
@@ -193,7 +234,7 @@ class PackageDB(DBConnect):
             name: optional, only returns first names which match
         
         returns:
-            Two dimensional array of data, reference SQL organizatino for further info
+            Two dimensional array of data, reference SQL organization for further info
         """
         sql = "SELECT studentID, firstName, lastName, address, city, st, zip, \
         name, room FROM Student, Housing WHERE Student.house = Housing.housingID"
@@ -201,6 +242,14 @@ class PackageDB(DBConnect):
         return(self.cursor.fetchall())
         
     def findStudent(self, studentID):
+        """Finds all packages assocaited with a given student in the system 
+        
+        Arguments:
+            studentID: The case ID of the student which is being looked up 
+        
+        returns:
+            Dictionary containing id, name, email (calculated value), and other fields 
+        """
         sql = "SELECT * FROM Student WHERE studentID=\"" + studentID + "\""
         self.cursor.execute(sql)
         pack = self.cursor.fetchall() 
@@ -224,7 +273,7 @@ class ImageProcessor():
         self.storage_client = storage.Client()
         self.packageDB = PackageDB()
     
-    def processImage(self, name):
+    def processImage(self, name, handwritten=False):
         """Takes the name of an already uploaded package and runs Vision AI analysis
         
         Arguments: 
@@ -236,7 +285,10 @@ class ImageProcessor():
         location = "gs://package-pal-images/" + name
         image = vision.types.Image()
         image.source.image_uri = location
-        response = self.vision_client.text_detection(image=image)
+        if not handwritten:
+            response = self.vision_client.text_detection(image=image)
+        else:
+            response = self.vision_client.document_text_detection(image=image)
         texts = response.text_annotations
         return texts
     
@@ -272,7 +324,7 @@ class ImageProcessor():
             if ranks[i] > maxVal[0]:
                 maxVal[0] = ranks[i]
                 maxVal[1] = i
-        return data[maxVal[1]][0]
+        return data[maxVal[1]][0], maxVal[0]
     
     def handle(self, file_stream, filename, content_type):
         """Takes file upload and returns the package ID now associated with the label
@@ -290,18 +342,28 @@ class ImageProcessor():
         Returns:
             Dictionary containing status and id of new package, -1 means failure
         """
+        global sendEmails
         try:
             name = self.uploadImage(file_stream, filename, "image/png")
             json = self.processImage(name)
-            student = self.parseText(json)
+            student, value = self.parseText(json)
+            if value < 5:
+                json = self.processImage(name, True)
+                student2, newVal = self.parseText(json)
+                if newVal > value:
+                    student = student2 
             self.packageDB.add(student, "", "Wade Commons", self.__simplifyJSON(json),\
                                "gs://package-pal-images/" + name)
-            resp = self.packageDB.find(-1, student, "", "Wade Commons",\
+            resp = self.packageDB.findPackage(-1, student, "", "Wade Commons",\
                                        "gs://package-pal-images/" + name)
-            if resp["id"] < 0:
-                return {"status": "FAILED BAD DB", "id": -1}
-            else:
-                return {"status": "OK", "id": str(resp["id"])}
+            for pack in resp:
+                if resp[pack]["id"] < 0:
+                    return {"status": "FAILED BAD DB", "id": -1}
+                else:
+                    if sendEmails:
+                        em = EmailSend()
+                        em.sendEmail(resp[pack]["id"])
+                    return {"status": "OK", "id": str(resp[pack]["id"])}
         except:
             return {"status": "FAILED BAD Internal", "id": -1}
     
@@ -345,6 +407,14 @@ class ImageProcessor():
         return data
     
     def __uniqueName(self, filename):
+        """Generates a unique name keeping the extension and the original name
+        
+        Arguments:
+            filename: The original filename 
+        
+        Returns:
+            A unique name affiliated with the given filename 
+        """
         if "." in str(filename):
             name = str(filename)[:str(filename).find(".")] +\
             uuid.uuid4().hex[0:8] + str(filename)[str(filename).find("."):]
@@ -352,8 +422,9 @@ class ImageProcessor():
             name = filename
         return name
     
-    def __hardRemove(self, packID):
-        name = self.packageDB.find(packID)["imageLoc"][24:]
+    def __hardRemove(self, packID): # pragma: no cover
+        """ Debugging Method to remove sample packages """
+        name = self.packageDB.findPackage(packID)[packID]["imageLoc"][24:]
         bucket = self.storage_client.get_bucket("package-pal-images")
         #remove sql
         sql = "DELETE FROM Package WHERE packageID={packageID}".format(packageID=packID)
@@ -366,39 +437,66 @@ class ImageProcessor():
                 blob.delete()
   
 class EmailSend():
+    """ Handles All Emails associated with Package Pal """
     def __init__(self):
+        """ Configure Email Services with SendGrid """
         self.packageDB = PackageDB()
+        self.sg = SendGridAPIClient(config['SendGrid']['Key'])
+        self.check()
         
     def check(self):
+        #TODO Implement 
+        """ Sees if any emails need to be sent about long waiting packages """
         pass
     
     def formEmail(self, packID):
-        pack = self.packageDB.find(packID)
-        resp = self.packageDB.findStudent(pack["recipient"])
+        """Generates the mail element associated with a given package 
+        
+        Arguments:
+            packID: The package ID of the package which needs to notify the recipient 
+        
+        Returns:
+            A mail element ready to be sent 
+        """
+        pack = self.packageDB.findPackage(packID)
+        for ind in pack:
+            resp = self.packageDB.findStudent(pack[ind]["recipient"])
+            pack = pack[ind]
         sender = 'HARLD@package-pal.appspot.com'
         recip = resp["email"]
         body = "<p>You have a package waiting at {loc}! Bring your CaseOneCard to the office to pick it up. \
-                </p><p>Here are some details:</p><table><tbody><tr><th align=\"right\">Type:</th><td>{size}</td></tr><tr><th align=\"right\">\
-                Delivery Date:</th><td>{arrival}</td></tr><tr><th align=\"right\">Carrier:</th><td>USPS Priority Mail</td></tr><tr><th align=\"right\"\
-                >Origin:</th><td>United States</td></tr></tbody></table><p> You can always access your waiting packages and mail in your \
+                </p><p>Here are some details:</p><table><tbody><tr><th align=\"right\">Type:</th><td>{size}</td></tr><tr>\
+                <th align=\"right\">Delivery Date:</th><td>{arrival}</td></tr><tr><th align=\"right\">\
+                Carrier:</th><td>USPS Priority Mail</td></tr><tr><th align=\"right\">Origin:</th><td>United States</td>\
+                </tr></tbody></table><p> You can always access your waiting packages and mail in your \
                 <a href=\"https://housing.case.edu/myhousing\" target=\"_blank\" data-saferedirecturl=\
-                \"https://www.google.com/url?q=https://housing.case.edu/myhousing&amp;source=gmail&amp;ust=1574113999646000&amp;usg=AFQjCNEQ9Z9It7YAe6Tu4smZca2gkFIP5w\">\
-                myHousing</a>.</p>".format(size="Box", arrival=str(pack["dateTimeIn"]), loc=str(pack["imageLoc"]))
+                \"https://www.google.com/url?q=\
+                https://housing.case.edu/myhousing&amp;source=gmail&amp;ust=1574113999646000&amp;\
+                usg=AFQjCNEQ9Z9It7YAe6Tu4smZca2gkFIP5w\
+                \">myHousing</a>.</p>".format(size="Box", arrival=str(pack["dateTimeIn"]), loc=str(pack["location"]))
         return Mail(from_email= sender,
                     to_emails=recip,
                     subject='[HARLD] You\'ve received a package!',
                     html_content=body)
         
-    def sendEmail(self, packID):
+    def sendEmail(self, packID): #pragma: no cover
+        """ Sends an email for a given package through Twilio:SendGrid
+        
+        Arguments:
+            packID: The package ID of the package which needs to notify the recipient 
+        
+        Returns:
+            The status of whether or not the email successfully sent 
+        """
         message = self.formEmail(packID)
         try:
-            sg = SendGridAPIClient(config['SendGrid']['Key'])
-            sg.send(message)
+            self.sg.send(message)
             return True
         except:
             return False
 
 def emails(secure):
+    """ Debugging toggle of whether to send emails or not """
     global sendEmails
     secure = int(secure)
     data = {}
@@ -413,7 +511,7 @@ def emails(secure):
 """!!! API CLASSES NEEDED FOR RESTFUL SERVER !!!"""
 class Package(Resource):
     """Class to handle queries for singular known packages"""
-    def get(self, packID):
+    def get(self, packID): # pragma: no cover
         """Method which handles the RESTful response 
         
         Uses connection to the SQL database for getting package information
@@ -428,36 +526,32 @@ class Package(Resource):
         return jsonify(db.find(packID))
     
 class Recents(Resource):
-    def get(self, packs):
+    """ Class to return recent packages """
+    def get(self, packs): # pragma: no cover
         db = PackageDB()
         return jsonify(db.recents(packs))
     
 class Search(Resource):
-    def get(self, phrase):
+    """ Class to find specifically student packages """
+    def get(self, phrase): # pragma: no cover
         db = PackageDB()
         return jsonify(db.search(phrase))
 
 class Test(Resource):
     """Class to test the running of backend server"""
-    def get(self):
+    def get(self): # pragma: no cover
         """Returns the status of the server, including time to check update"""
         return jsonify(status="ok", version="1.0", time=str(datetime.datetime.now().time()))
     
-class Employees_Name(Resource):
-    """Class to handle """
-    def get(self, employee_id):
-        return jsonify(username="Jason", email="jd4", id="jd45")
-    
-class Email(Resource):
-    """Class to handle """
-    def get(self, secure):
+class Email(Resource): 
+    """Class to toggle email status """
+    def get(self, secure): # pragma: no cover
         return jsonify(emails(secure))
 
 
 """!!! API ROUTE DEFINITIONS !!!"""
 api.add_resource(Package, '/package/<packID>') # Route_1
 api.add_resource(Test, '/test') # Route_2
-api.add_resource(Employees_Name, '/employees/<employee_id>') # Route_3
 api.add_resource(Recents, '/recents/<packs>') # Route_4
 api.add_resource(Search, '/search/<phrase>') # Route_5
 api.add_resource(Email, '/email/<secure>') # Route_6
@@ -494,5 +588,5 @@ def upload_file():
 """!!! MAIN METHOD !!!"""
 if __name__ == '__main__':
     #Start Flask Server
-    app.run(port=8080, debug=True, use_reloader=False)
+    app.run(port=8080, debug=True, use_reloader=False) # pragma: no cover
     #print("Hello World")
