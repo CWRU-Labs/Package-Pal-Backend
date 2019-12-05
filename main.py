@@ -15,6 +15,10 @@ import uuid
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
+#import os
+#os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\jacob\\OneDrive\\Documents\\College\\Software Engineering\\Package-Pal-0166fd578b07.json"
+
+
 # Read configuration from file.
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -62,7 +66,7 @@ class PackageDB(DBConnect):
         """
         numID = int(packID)
         if numID > -1:
-            sql = "SELECT * FROM Package WHERE packageID={packageID}  AND dateTimeOut IS NULL".format(packageID=numID)
+            sql = "SELECT * FROM Package WHERE packageID={packageID}".format(packageID=numID)
         else:
             if imageLoc == "":
                 sql = "SELECT * FROM Package WHERE recipient='{rec}' AND \
@@ -402,9 +406,9 @@ class ImageProcessor():
             else:
                 center = "Fribley Commons"
             self.packageDB.add(student, addr, center, self.__simplifyJSON(json),\
-                               "gs://package-pal-images/" + name)
+                               "gs://package-pal-images/" + name, "New Package!")
             resp = self.packageDB.findPackage(-1, student, addr, center,\
-                                       "gs://package-pal-images/" + name)
+                                       "gs://package-pal-images/" + name, "New Package!")
             if resp["id"] < 0:
                 return {"status": "FAILED BAD DB", "id": -4}
             else:
