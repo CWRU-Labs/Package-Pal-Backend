@@ -62,7 +62,7 @@ class PackageDB(DBConnect):
         """
         numID = int(packID)
         if numID > -1:
-            sql = "SELECT * FROM Package WHERE packageID={packageID}".format(packageID=numID)
+            sql = "SELECT * FROM Package WHERE packageID={packageID}  AND dateTimeOut IS NULL".format(packageID=numID)
         else:
             if imageLoc == "":
                 sql = "SELECT * FROM Package WHERE recipient='{rec}' AND \
@@ -74,7 +74,6 @@ class PackageDB(DBConnect):
                 ".format(rec=recipient, add=address, loc=location, im=imageLoc)
         self.cursor.execute(sql)
         results = self.cursor.fetchall()
-        data = {}
         if len(results) == 0:
             return {"id":-1, 
                     "recipient":"", 
@@ -88,7 +87,7 @@ class PackageDB(DBConnect):
                     }
         else:
             for pack in results: 
-                data[pack[0]] = {"id":results[0][0], 
+                return {"id":results[0][0], 
                     "recipient":results[0][1], 
                     "address":results[0][2], 
                     "location":results[0][3], 
@@ -98,7 +97,6 @@ class PackageDB(DBConnect):
                     "imageLoc":results[0][7], 
                     "description":results[0][8]
                     }
-        return data
     
     def recents(self, number = 5):
         """ Returns a set of pnumber (default 5) recent packages
@@ -125,11 +123,10 @@ class PackageDB(DBConnect):
                     "description":""
                     }
         else:
-            index = len(resp)
-            while index > 0:
-                index -= 1
+            index = 0
+            while index < len(resp):
                 pack = resp[index]
-                data[pack[0]] = {"id":pack[0], 
+                data[index] = {"id":pack[0], 
                     "recipient":pack[1], 
                     "address":pack[2], 
                     "location":pack[3], 
@@ -139,6 +136,7 @@ class PackageDB(DBConnect):
                     "imageLoc":pack[7], 
                     "description":pack[8]
                     }
+                index += 1
         return data 
     
     def find(self, string):
@@ -161,7 +159,11 @@ class PackageDB(DBConnect):
         if caseID:
             return self.search(string)
         else:
-            return self.findPackage(string)
+            resp = self.findPackage(string)
+            if resp["id"] == -1:
+                return resp
+            else:
+                return {0: resp}
                 
     def search(self, phrase):
         """Finds given set of students in the Students table
@@ -188,8 +190,9 @@ class PackageDB(DBConnect):
                     "description":""
                     }
         else:
-            for pack in resp: 
-                data[pack[0]] = {"id":pack[0], 
+            for i in range(0, len(resp)):
+                pack = resp[i]
+                data[i] = {"id":pack[0], 
                     "recipient":pack[1], 
                     "address":pack[2], 
                     "location":pack[3], 
@@ -201,7 +204,6 @@ class PackageDB(DBConnect):
                     }
         return data 
 
-    
     def add(self, 
                       recipient, 
                       address, 
@@ -227,7 +229,7 @@ class PackageDB(DBConnect):
         self.cursor.execute(sql, values)
         self.mydb.commit()
         
-    def getStudentHousing(self, name=""):
+    def getStudentHousing(self, studentID=""):
         """Finds given set of students in the Students table
         
         Arguments:
@@ -236,13 +238,18 @@ class PackageDB(DBConnect):
         returns:
             Two dimensional array of data, reference SQL organization for further info
         """
-        sql = "SELECT studentID, firstName, lastName, address, city, st, zip, \
-        name, room FROM Student, Housing WHERE Student.house = Housing.housingID"
+        if len(studentID) > 0:
+            sql = "SELECT studentID, firstName, lastName, address, city, st, zip, \
+            name, room FROM Student, Housing WHERE Student.house = Housing.housingID \
+            AND studentID='{sid}'".format(sid=studentID)
+        else:
+            sql = "SELECT studentID, firstName, lastName, address, city, st, zip, \
+            name, room FROM Student, Housing WHERE Student.house = Housing.housingID"
         self.cursor.execute(sql)
         return(self.cursor.fetchall())
         
     def findStudent(self, studentID):
-        """Finds all packages assocaited with a given student in the system 
+        """Finds a given student given their case ID 
         
         Arguments:
             studentID: The case ID of the student which is being looked up 
@@ -263,6 +270,42 @@ class PackageDB(DBConnect):
                     "name":str(pack[1]) + str(pack[2]), 
                     "email": str(pack[0]) + "@case.edu",
                     "other": pack[3]}
+            
+    def update(self, packID, studentID, address, location, description):
+        """Updates data in the table in case it is incorrect 
+        
+        Arguments:
+            packID: The package ID for the package being changes, this does not change
+            studentID: The student who is assocaited with the package, must be in database
+            address: The address of the package 
+            location: The physical location where this package is being stored
+            description: The custom description of the package 
+        
+        returns:
+            Dictionary containing the new package information as in database  
+        """
+        global sendEmails
+        if self.findStudent(studentID)["id"] == -1:
+            return {"status": "invalid caseID"}
+        if self.findPackage(packID)["id"] == -1:
+            return {"status": "package not found"}
+        sql = "UPDATE Package SET recipient='{rec}', address='{add}', \
+                location='{loc}', description='{desc}' WHERE packageID={packageID}\
+                ".format(rec=studentID, add=address, loc=location, 
+                desc=description, packageID=packID)
+        self.cursor.execute(sql)
+        self.mydb.commit()
+        
+        if sendEmails:
+            em = EmailSend()
+            em.sendEmail(packID)
+        return self.findPackage(packID)
+    
+    def pickedUp(self, packID):
+        sql = "UPDATE Package SET dateTimeOut=current_timestamp WHERE packageID={packageID}"
+        self.cursor.execute(sql)
+        self.mydb.commit()
+        return self.findPackage(packID)
         
     
 class ImageProcessor():
@@ -352,18 +395,20 @@ class ImageProcessor():
                 student2, newVal = self.parseText(json)
                 if newVal > value:
                     student = student2 
-            self.packageDB.add(student, "", "Wade Commons", self.__simplifyJSON(json),\
+            info = self.packageDB.getStudentHousing(student)
+            addr = info[0][3] + ", " + info[0][4] + ", " + info[0][5]
+            if info[0][7].startswith("House ") or "Cutle" in info [0][7]:
+                center = "Wade Commons"
+            else:
+                center = "Fribley Commons"
+            self.packageDB.add(student, addr, center, self.__simplifyJSON(json),\
                                "gs://package-pal-images/" + name)
-            resp = self.packageDB.findPackage(-1, student, "", "Wade Commons",\
+            resp = self.packageDB.findPackage(-1, student, addr, center,\
                                        "gs://package-pal-images/" + name)
-            for pack in resp:
-                if resp[pack]["id"] < 0:
-                    return {"status": "FAILED BAD DB", "id": -1}
-                else:
-                    if sendEmails:
-                        em = EmailSend()
-                        em.sendEmail(resp[pack]["id"])
-                    return {"status": "OK", "id": str(resp[pack]["id"])}
+            if resp["id"] < 0:
+                return {"status": "FAILED BAD DB", "id": -4}
+            else:
+                return {"status": "OK", "id": str(resp["id"])}
         except:
             return {"status": "FAILED BAD Internal", "id": -1}
     
@@ -424,7 +469,7 @@ class ImageProcessor():
     
     def __hardRemove(self, packID): # pragma: no cover
         """ Debugging Method to remove sample packages """
-        name = self.packageDB.findPackage(packID)[packID]["imageLoc"][24:]
+        name = self.packageDB.findPackage(packID)["imageLoc"][24:]
         bucket = self.storage_client.get_bucket("package-pal-images")
         #remove sql
         sql = "DELETE FROM Package WHERE packageID={packageID}".format(packageID=packID)
@@ -459,13 +504,11 @@ class EmailSend():
             A mail element ready to be sent 
         """
         pack = self.packageDB.findPackage(packID)
-        for ind in pack:
-            resp = self.packageDB.findStudent(pack[ind]["recipient"])
-            pack = pack[ind]
+        resp = self.packageDB.findStudent(pack["recipient"])
         sender = 'HARLD@package-pal.appspot.com'
         recip = resp["email"]
         body = "<p>You have a package waiting at {loc}! Bring your CaseOneCard to the office to pick it up. \
-                </p><p>Here are some details:</p><table><tbody><tr><th align=\"right\">Type:</th><td>{size}</td></tr><tr>\
+                </p><p>Here are some details:</p><table><tbody><tr><th align=\"right\">Description:</th><td>{size}</td></tr><tr>\
                 <th align=\"right\">Delivery Date:</th><td>{arrival}</td></tr><tr><th align=\"right\">\
                 Carrier:</th><td>USPS Priority Mail</td></tr><tr><th align=\"right\">Origin:</th><td>United States</td>\
                 </tr></tbody></table><p> You can always access your waiting packages and mail in your \
@@ -473,7 +516,7 @@ class EmailSend():
                 \"https://www.google.com/url?q=\
                 https://housing.case.edu/myhousing&amp;source=gmail&amp;ust=1574113999646000&amp;\
                 usg=AFQjCNEQ9Z9It7YAe6Tu4smZca2gkFIP5w\
-                \">myHousing</a>.</p>".format(size="Box", arrival=str(pack["dateTimeIn"]), loc=str(pack["location"]))
+                \">myHousing</a>.</p>".format(size=str(pack["description"]), arrival=str(pack["dateTimeIn"]), loc=str(pack["location"]))
         return Mail(from_email= sender,
                     to_emails=recip,
                     subject='[HARLD] You\'ve received a package!',
@@ -508,6 +551,7 @@ def emails(secure):
         data["status"] = "Incorrect Key"
     return data 
 
+
 """!!! API CLASSES NEEDED FOR RESTFUL SERVER !!!"""
 class Package(Resource):
     """Class to handle queries for singular known packages"""
@@ -523,7 +567,7 @@ class Package(Resource):
             Package information returned in the form of JSON
         """
         db = PackageDB()
-        return jsonify(db.find(packID))
+        return jsonify(db.findPackage(packID))
     
 class Recents(Resource):
     """ Class to return recent packages """
@@ -535,7 +579,7 @@ class Search(Resource):
     """ Class to find specifically student packages """
     def get(self, phrase): # pragma: no cover
         db = PackageDB()
-        return jsonify(db.search(phrase))
+        return jsonify(db.find(phrase))
 
 class Test(Resource):
     """Class to test the running of backend server"""
@@ -547,14 +591,51 @@ class Email(Resource):
     """Class to toggle email status """
     def get(self, secure): # pragma: no cover
         return jsonify(emails(secure))
-
+    
+class Update(Resource):
+    """Class to update package information"""
+    def get(self, packID, studentID, add, loc, desc): # pragma: no cover
+        db = PackageDB()
+        return jsonify(db.update(packID, studentID, add, loc, desc))
+    
+class Checkout(Resource):
+    """Class for package being checked out"""
+    def get(self, packID): #pragma: no cover
+        db = PackageDB()
+        return jsonify(db.pickedUp(packID))
 
 """!!! API ROUTE DEFINITIONS !!!"""
 api.add_resource(Package, '/package/<packID>') # Route_1
 api.add_resource(Test, '/test') # Route_2
-api.add_resource(Recents, '/recents/<packs>') # Route_4
-api.add_resource(Search, '/search/<phrase>') # Route_5
-api.add_resource(Email, '/email/<secure>') # Route_6
+api.add_resource(Recents, '/recents/<packs>') # Route_3
+api.add_resource(Search, '/search/<phrase>') # Route_4
+api.add_resource(Email, '/email/<secure>') # Route_5
+api.add_resource(Update, '/update/<packID>/<studentID>/<add>/<loc>/<desc>') # Route_6
+api.add_resource(Checkout, '/delete/<packID>') # Route_7
+
+@app.route('/update/<packID>', methods = ['POST', 'PUT'])
+@cross_origin(origin='*')
+def updates(packID):
+    """ Handles update Put Requests 
+    
+    Takes recipient, location, address, description information and updates 
+        
+    Returns:
+        The updated package 
+    """
+    if request.method == 'PUT':
+        # check if the post request has the file part
+        if "address" not in request.json:
+            dat = request.json
+            inf = request.files.to_dict(flat=True)
+            return jsonify(status="FAILED 1", json=str(dat),\
+                           files=str(inf.keys()), other=str(request.files.get('file')), id="-1")
+        studentID = request.json['recipient']
+        add = request.json['address']
+        loc = request.json['location']
+        desc = request.json['description']
+        db = PackageDB()
+        return jsonify(db.update(packID, studentID, add, loc, desc))
 
 @app.route('/uploader', methods = ['POST', 'GET'])
 @cross_origin(origin='*')
@@ -589,4 +670,3 @@ def upload_file():
 if __name__ == '__main__':
     #Start Flask Server
     app.run(port=8080, debug=True, use_reloader=False) # pragma: no cover
-    #print("Hello World")
