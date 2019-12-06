@@ -15,10 +15,6 @@ import uuid
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
-#import os
-#os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\jacob\\OneDrive\\Documents\\College\\Software Engineering\\Package-Pal-0166fd578b07.json"
-
-
 # Read configuration from file.
 config = configparser.ConfigParser()
 config.read('config.ini')
@@ -153,22 +149,62 @@ class PackageDB(DBConnect):
             A dictionary containing all packages data
         """
         caseID = True
+        packs = True
         if len(string) > 3:
             for i in range(3):
                 if string[i] < 'A' or string[i] > 'z':
                     caseID = False
                     break
-        else:
-            caseID = False
+            for i in range(3, len(string)):
+                if string[i] < '0' or string[i] > '9':
+                    caseID = False
+                    break
+        for char in string:
+            if char < '0' or char > '9':
+                packs = False
         if caseID:
             return self.search(string)
-        else:
+        elif packs:
             resp = self.findPackage(string)
             if resp["id"] == -1:
                 return resp
             else:
                 return {0: resp}
-                
+        else:
+            return self.allSearch(string)
+            
+    def allSearch(self, phrase):
+        sql = "SELECT * FROM Package WHERE recipient LIKE '%{query}%' OR  \
+                address LIKE '%{query}%' OR description LIKE '%{query}%'".format(query=phrase)
+        self.cursor.execute(sql)
+        resp = self.cursor.fetchall() 
+        data = {}
+        if len(resp) == 0:
+            return {"id":-1, 
+                    "recipient":"", 
+                    "address":"", 
+                    "location":"", 
+                    "dateTimeIn":"", 
+                    "dateTimeOut":"", 
+                    "completeText":"", 
+                    "imageLoc":"", 
+                    "description":""
+                    }
+        else:
+            for i in range(0, len(resp)):
+                pack = resp[i]
+                data[i] = {"id":pack[0], 
+                    "recipient":pack[1], 
+                    "address":pack[2], 
+                    "location":pack[3], 
+                    "dateTimeIn":pack[4], 
+                    "dateTimeOut":pack[5], 
+                    "completeText":pack[6], 
+                    "imageLoc":pack[7], 
+                    "description":pack[8]
+                    }
+        return data
+    
     def search(self, phrase):
         """Finds given set of students in the Students table
         
@@ -306,7 +342,7 @@ class PackageDB(DBConnect):
         return self.findPackage(packID)
     
     def pickedUp(self, packID):
-        sql = "UPDATE Package SET dateTimeOut=current_timestamp WHERE packageID={packageID}"
+        sql = "UPDATE Package SET dateTimeOut=current_timestamp WHERE packageID={packageID}".format(packageID=packID)
         self.cursor.execute(sql)
         self.mydb.commit()
         return self.findPackage(packID)
@@ -406,9 +442,9 @@ class ImageProcessor():
             else:
                 center = "Fribley Commons"
             self.packageDB.add(student, addr, center, self.__simplifyJSON(json),\
-                               "gs://package-pal-images/" + name, "New Package!")
+                               "gs://package-pal-images/" + name, "")
             resp = self.packageDB.findPackage(-1, student, addr, center,\
-                                       "gs://package-pal-images/" + name, "New Package!")
+                                       "gs://package-pal-images/" + name, "")
             if resp["id"] < 0:
                 return {"status": "FAILED BAD DB", "id": -4}
             else:
