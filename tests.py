@@ -2,13 +2,13 @@
 """
 Created on Fri Nov 15 11:50:08 2019
 
-@author: jacob
+@author: Jacob Engelbrecht 
 """
 
-import serv
+import main
 import unittest 
 import os 
-import json
+import random
 from PIL import Image
 from io import BytesIO
 # Imports the Google Cloud client library
@@ -91,9 +91,8 @@ class TestStringMethods(unittest.TestCase):
         
         db = serv.PackageDB()
         entry = db.findPackage(num)
-        for pack in entry:
-            self.assertNotIn("-1", str(entry[pack]["id"]))        
-            name = entry[pack]["imageLoc"][24:]
+        self.assertNotIn("-1", str(entry["id"]))        
+        name = entry["imageLoc"][24:]
         # Instantiates a client
         storage_client = storage.Client()
         bucket = storage_client.get_bucket("package-pal-images")
@@ -132,12 +131,12 @@ class TestStringMethods(unittest.TestCase):
         resp = db.find("9999")
         self.assertIn("-1", str(resp["id"]))
         resp = db.findPackage("14")
-        self.assertIn("14", str(resp[14]["id"]))
-        self.assertIn("jdr145", resp[14]["recipient"])
+        self.assertIn("14", str(resp["id"]))
+        self.assertIn("jdr145", resp["recipient"])
         resp = db.findPackage("-1", "jdr145", "", "Wade Commons", "gs://package-pal-images/jrLabel.png", "")
-        self.assertIn("14", str(resp[14]["id"]))
+        self.assertIn("14", str(resp["id"]))
         resp = db.findPackage("-1", "jdr145", "", "Wade Commons", "", "")
-        self.assertIn("14", str(resp[14]["id"]))
+        self.assertIn("14", str(resp["id"]))
         
     def test_emailToggle(self):
         resp = serv.emails(2021)
@@ -149,6 +148,16 @@ class TestStringMethods(unittest.TestCase):
         em = serv.EmailSend()
         resp = em.formEmail(14)
         self.assertIn("[HARLD]", str(resp.subject))
+        
+    def test_update(self):
+        db = serv.PackageDB()
+        resp = db.update(987, "jse41", "", "", "")
+        self.assertIn("package", resp["status"])
+        resp = db.update(14, "456", "", "", "")
+        self.assertIn("invalid", resp["status"])
+        string = "Village" + str(random.randint(0, 100))
+        resp = db.update(18, "jse41", string, "Wade", "TestingUse")
+        self.assertIn(string, resp["address"])
         
 
 def getJSON(path):
