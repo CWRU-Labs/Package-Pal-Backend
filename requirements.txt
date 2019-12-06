@@ -1,0 +1,8 @@
+Flask==1.1.1
+Flask-RESTful
+flask-cors
+mysql-connector-python==8.0.11
+google.cloud
+google.cloud.vision
+google-cloud-storage
+sendgrid
