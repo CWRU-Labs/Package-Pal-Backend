@@ -1,7 +1,7 @@
 Flask==1.1.1
 Flask-RESTful
 flask-cors
-mysql-connector-python==8.0.11
+mysql-connector-python==8.0.14
 google.cloud
 google.cloud.vision
 google-cloud-storage
